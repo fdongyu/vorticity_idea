@@ -54,8 +54,8 @@ class cal_vorticity(object):
         
         #lon = nc.variables['lon_rho'][:]
         #lat = nc.variables['lat_rho'][:]        
-        u = nc.variables['u'][:,0,:,:]   # velocity at all levels
-        v = nc.variables['v'][:,0,:,:]
+        u = nc.variables['u'][:,:,:,:]   # velocity at all levels
+        v = nc.variables['v'][:,:,:,:]
         ftime = nc.variables['ocean_time']
         time = num2date(ftime[:],ftime.units)
         self.ind0 = self.findNearest(self.starttime,time)
@@ -65,12 +65,12 @@ class cal_vorticity(object):
         self.data_roms['time'] = time[self.ind0:self.ind1+1]
         self.data_roms['lon_rho'] = nc.variables['lon_rho'][:]
         self.data_roms['lat_rho'] = nc.variables['lat_rho'][:]      
-        self.data_roms['u'] = u[self.ind0:self.ind1+1,:,0:-2] # surface velocity
-        self.data_roms['v'] = v[self.ind0:self.ind1+1,0:-2,:]
+        self.data_roms['u'] = u[self.ind0:self.ind1+1,:,:,0:-2] # surface velocity
+        self.data_roms['v'] = v[self.ind0:self.ind1+1,:,0:-2,:]
         self.data_roms['mask'] = nc.variables['mask_rho'][:]
         self.data_roms['angle'] = nc.variables['angle'][:]
         self.data_roms['h'] = nc.variables['h'][:]
-        
+
         self.data_roms['lon_psi'] = nc.variables['lon_psi'][:][0:-1,0:-1]
         self.data_roms['lat_psi'] = nc.variables['lat_psi'][:][0:-1,0:-1]
         self.data_roms['mask_psi'] = nc.variables['mask_psi'][:][0:-1,0:-1]
@@ -114,9 +114,6 @@ class cal_vorticity(object):
             out_yv = np.zeros_like(yv)
             out_xv = np.zeros_like(xv)
             (nx, ny) = xv.shape
-            #rotatedPolygon = []
-            #for corner in polygon :
-            #    rotatedPolygon.append(( corner[0]*math.cos(theta)-corner[1]*math.sin(theta) , corner[0]*math.sin(theta)+corner[1]*math.cos(theta)) )
             for i in range(nx):
                 for j in range(ny):
                     out_yv[i,j] = yv[i,j]*math.cos(theta)-xv[i,j]*math.sin(theta)
@@ -144,7 +141,7 @@ class cal_vorticity(object):
         """
         function that interpolate the ROMS velocity
         Input: new grid
-        Output: depth-averaged interpolated velocity field
+        Output: interpolated velocity field
         """        
         
         #### subset ROMS grid for interpolation ####
@@ -156,14 +153,19 @@ class cal_vorticity(object):
         mask = self.data_roms['mask'][1:-2,1:-2]
         u = self.data_roms['u']
         v = self.data_roms['v']
+        ang = self.data_roms['angle'][1:-2,1:-2]
+        Nk = u.shape[1]
 
-        
         # average u,v to central rho points           
-        uroms = np.zeros((len(time),mask.shape[0], mask.shape[1]))
-        vroms = np.zeros((len(time),mask.shape[0], mask.shape[1]))
+        uroms = np.zeros((len(time), Nk, mask.shape[0], mask.shape[1]))
+        vroms = np.zeros((len(time), Nk, mask.shape[0], mask.shape[1]))
         for t in range(len(time)):
-            uroms[t,:,:] = self.shrink(u[t,:,:], mask.shape)
-            vroms[t,:,:] = self.shrink(v[t,:,:], mask.shape)
+            for k in range(Nk):
+                uroms[t,k,:,:] = self.shrink(u[t,k,:,:], mask.shape)
+                vroms[t,k,:,:] = self.shrink(v[t,k,:,:], mask.shape)
+        
+        #### adjust velocity direction ####        
+        uroms, vroms = self.rot2d(uroms, vroms, ang)
         
         #### Step 2) subset ROMS grid for interpolation ####               
         SW=(new_lat.min(), new_lon.min())  ###(lat, lon)
@@ -181,8 +183,8 @@ class cal_vorticity(object):
         yss = yroms[J0:J1,I0:I1]  ##subset x,y
         xss = xroms[J0:J1,I0:I1]
         maskss = mask[J0:J1,I0:I1]
-        u = uroms[:,J0:J1,I0:I1]
-        v = vroms[:,J0:J1,I0:I1]
+        u = uroms[:,:,J0:J1,I0:I1]
+        v = vroms[:,:,J0:J1,I0:I1]
         
         #### Step 3) Prepare the grid variables for the interpolation class ####
         xy_roms = np.vstack((xss[maskss==1],yss[maskss==1])).T        
@@ -192,58 +194,22 @@ class cal_vorticity(object):
         Fuv = interpXYZ(xy_roms, xy_new)
         
         X, Y = xnew.shape
-        uout = np.zeros((len(time), X, Y))
-        vout = np.zeros((len(time), X, Y))
+        uout = np.zeros((len(time),Nk, X, Y))
+        vout = np.zeros((len(time),Nk, X, Y))
         
         print "interpolating ROMS U, V velocity onto the new rectilinear grid!!! \n"
         #### Loop through time to do the interpolation ####
         for tstep in range(len(time)):
-            utem = Fuv(u[tstep,:,:][maskss==1].flatten()) 
-            vtem = Fuv(v[tstep,:,:][maskss==1].flatten())
-            uout[tstep,:,:] = utem.reshape(X,Y)
-            vout[tstep,:,:] = vtem.reshape(X,Y)
+            for k in range(Nk):
+                utem = Fuv(u[tstep,k,:,:][maskss==1].flatten()) 
+                vtem = Fuv(v[tstep,k,:,:][maskss==1].flatten())
+                uout[tstep,k,:,:] = utem.reshape(X,Y)
+                vout[tstep,k,:,:] = vtem.reshape(X,Y)
             
+        #pdb.set_trace()
         
-        
-        return uout, vout
-#        ######################################################################
-#        #### These are just for testing if the interpolation is correct   ####
-#        #### commented if not using                                       ####
-#        west=-95.42; east=-93.94
-#        south=28.39;  north=29.90
-#        fig = plt.figure(figsize=(10,8))
-#        basemap = Basemap(projection='merc',llcrnrlat=south,urcrnrlat=north,\
-#                    llcrnrlon=west,urcrnrlon=east, resolution='h')
-#            
-#        basemap.drawcoastlines()
-#        basemap.fillcontinents(color='coral',lake_color='aqua')
-#        basemap.drawcountries()
-#        basemap.drawstates()  
-#        
-#        llons, llats=basemap(new_lon,new_lat)   
-#        con = basemap.pcolormesh(llons,llats,uout[0,:,:])
-#        con.set_clim(vmin=-0.08, vmax=0.03)
-#        cbar = plt.colorbar(con, orientation='vertical')
-#        cbar.set_label("velocity")
-#        #plt.show()
-#
-#        fig = plt.figure(figsize=(10,8))
-#        basemap = Basemap(projection='merc',llcrnrlat=south,urcrnrlat=north,\
-#                    llcrnrlon=west,urcrnrlon=east, resolution='h')
-#            
-#        basemap.drawcoastlines()
-#        basemap.fillcontinents(color='coral',lake_color='aqua')
-#        basemap.drawcountries()
-#        basemap.drawstates()  
-#        
-#        llons, llats=basemap(lon,lat)   
-#        uroms[np.abs(uroms)>1.] = 0 
-#        con = basemap.pcolormesh(llons,llats,uroms[0,:,:])
-#        con.set_clim(vmin=-0.08, vmax=0.03)
-#        cbar = plt.colorbar(con, orientation='vertical')
-#        cbar.set_label("velocity")
-#        plt.show() 
-#        ######################################################################
+        return uout[:,:,:,:], vout[:,:,:,:]
+
 
     def vorticity_filtered(self, new_lon, new_lat):
         """
@@ -546,6 +512,23 @@ class cal_vorticity(object):
 #        plt.show() 
 #        ######################################################################
 
+        hout = self.interp_h(new_lon, new_lat)
+
+        return tau_x_new, tau_y_new, hout
+
+
+    def interp_h(self, new_lon, new_lat):
+        """
+        funtion that interpolates the water depth onto the new rectilinear grid
+        Input: lon, lat of the new grid
+        Output: interpolated h
+        """
+        new_SW=(new_lat.min(), new_lon.min())  ###(lat, lon)
+        new_NE=(new_lat.max(), new_lon.max()) 
+        
+        xnew, ynew = self.convert_utm(new_lon, new_lat)
+        xy_new = np.vstack((xnew.ravel(),ynew.ravel())).T  ## new grid
+
         lon_rho = self.data_roms['lon_rho'][1:-2,1:-2]
         lat_rho = self.data_roms['lat_rho'][1:-2,1:-2]
         mask_rho = self.data_roms['mask'][1:-2,1:-2]
@@ -572,9 +555,9 @@ class cal_vorticity(object):
         #### Loop through time to do the interpolation ####
         htem = Fh(h_ss[:,:][mask_rho_ss==1].flatten()) 
         hout[:,:] = htem.reshape(xnew.shape[0], xnew.shape[1])
-      
-      
-        return tau_x_new, tau_y_new, hout
+                
+        return hout
+        
 
         
     def calc(self):
@@ -585,7 +568,18 @@ class cal_vorticity(object):
         
         lon, lat, dx, dy = self.rectilinear(90,30)
         #### The interpolated ROMS u, v velocity
-        u, v = self.interp_roms_uv(lon, lat)
+        u_all, v_all = self.interp_roms_uv(lon, lat)
+        hout = self.interp_h(lon, lat)
+        uout = np.sum(u_all, axis=1)
+        vout = np.sum(v_all, axis=1)
+        u = np.zeros_like(uout)
+        v = np.zeros_like(vout)
+        for tstep in range(len(self.data_roms['time'])):
+            u[tstep,:,:] = uout[tstep,:,:]/hout[:,:]
+            v[tstep,:,:] = vout[tstep,:,:]/hout[:,:]
+            
+        u, v = self.rot2d(u, v, math.radians(-35))
+        
         #### The interpolated filtered SUNTANS vorticity
         w_filter = self.vorticity_filtered(lon, lat)
         
@@ -725,6 +719,9 @@ class cal_vorticity(object):
         
         #### The interpolated ROMS u, v velocity
         ur, vr = self.interp_roms_uv(lon, lat)
+        ur = ur[:,0,:,:]
+        vr = vr[:,0,:,:]
+        ur, vr = self.rot2d(ur, vr, math.radians(35))
         spd_roms = np.sqrt(ur*ur+vr*vr)        
         
         uu = -w/2.* dy
@@ -734,20 +731,7 @@ class cal_vorticity(object):
         unew = ur + uu
         vnew = vr + vv
         spd_new = spd_roms + spd_filter
-        
-        def rot2d(x, y, ang):
-            """
-            rotate vectors by geometric angle
-            This routine is part of Rob Hetland's OCTANT package:
-            https://github.com/hetland/octant
-            """
-            ang = math.radians(ang)
-            xr = x*np.cos(ang) - y*np.sin(ang)
-            yr = x*np.sin(ang) + y*np.cos(ang)
-            return xr, yr
-            
-        ang = -35    
-        unew, vnew =  rot2d(unew, vnew, ang) 
+                    
         pdb.set_trace()
         
         #### Compare ####
@@ -857,8 +841,17 @@ class cal_vorticity(object):
         basemap.plot(llons.T, llats.T, color='k', ls='-', markersize=.5)
         plt.show()    
             
-               
-        
+    def rot2d(self, x, y, ang):
+        """
+        rotate vectors by geometric angle
+        This routine is part of Rob Hetland's OCTANT package:
+            https://github.com/hetland/octant
+        """
+        xr = x*np.cos(ang) - y*np.sin(ang)
+        yr = x*np.sin(ang) + y*np.cos(ang)
+        return xr, yr            
+     
+     
     def distance_on_unit_sphere(self,lat1, long1, lat2, long2):
         """
         function that calcuates the distance between two coordinates
