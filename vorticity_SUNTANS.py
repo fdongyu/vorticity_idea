@@ -97,13 +97,13 @@ class vorticity(object):
         self.face =\
                 np.ma.masked_array(self.face,mask=self.cellmask,fill_value=0)
 
-	self.mark = nc.variables['mark'][:]
+        self.mark = nc.variables['mark'][:]
         self.xe = nc.variables['xe'][:]
         self.ye = nc.variables['ye'][:] 
 
-	self.dv = nc.variables['dv'][:]
-	self.tau_x = nc.variables['tau_x'][self.ind0:self.ind1+1,:]
-	self.tau_y = nc.variables['tau_y'][self.ind0:self.ind1+1,:]	       
+        self.dv = nc.variables['dv'][:]
+        self.tau_x = nc.variables['tau_x'][self.ind0:self.ind1+1,:]
+        self.tau_y = nc.variables['tau_y'][self.ind0:self.ind1+1,:]	       
 
         #pdb.set_trace()
 
@@ -123,6 +123,7 @@ class vorticity(object):
             grad1 = self.grad[:,0]
             grad2 = self.grad[:,1]
             #Apply mask to jj
+            jj = jj.astype(int)  ## added by Dongyu
             jj[jj.mask]=0
             nc1 = grad1[jj]
             nc2 = grad2[jj]
@@ -321,7 +322,7 @@ class vorticity(object):
         #from vorticity_ROMS import vorticity
         
         wdr = os.getcwd()
-	nc = Dataset(ROMS_file,'r')
+        nc = Dataset(ROMS_file,'r')
         #nc = Dataset(wdr+'/download_ROMS/'+ROMS_file,'r')
         print "#### Reading ROMS output file !!!! ####\n"
         lon = nc.variables['lon_psi'][:][0:-1,0:-1]
@@ -388,9 +389,16 @@ class vorticity(object):
         lonss = lon[J0:J1,I0:I1] ## subset lon, lat
         latss = lat[J0:J1,I0:I1]     
         
-        ################################################
-        #### Spatial average ####
-        #wout, lonss, latss = self.average(wout, lonss, latss, maskss)
+#        ################################################
+#        #### Spatial average ####
+#        wout, lonss, latss = self.average(wout, lonss, latss, maskss)
+#        ## mask out some values ##
+#        _fillvalue = 99999
+#        wout[:,0,:] = _fillvalue; wout[:,:,0] = _fillvalue; wout[:,1:4,-1] = _fillvalue
+#        wout[:,1:3,1] = _fillvalue; wout[:,1:3,-2] = _fillvalue; 
+#        wout[:,1,2] = _fillvalue; wout[:,1,-3] = _fillvalue
+#        wout = np.ma.array(wout, mask=wout==_fillvalue)
+#        #pdb.set_trace()
         ################################################
         return wout, lonss, latss, maskss        
         
@@ -399,9 +407,9 @@ class vorticity(object):
         """
         function that plots the interpolated SUNTANS vorticity
         """
-	wdr = os.getcwd()
+        wdr = os.getcwd()
 
-	ROMS_file = wdr+'/download_ROMS/txla_subset_HIS.nc'
+        ROMS_file = wdr+'/download_ROMS/txla_subset_HIS.nc'
         w, lonss, latss, maskss = self.interp(ROMS_file)
         
         timeformat = '%Y%m%d-%H%M'
@@ -420,8 +428,9 @@ class vorticity(object):
             basemap.drawstates()  
             
             llons, llats=basemap(lonss,latss)   
-            con = basemap.pcolormesh(llons,llats,w[i,:,:])
-            con.set_clim(vmin=-0.0003, vmax=0.0003)
+            con = basemap.contourf(llons,llats,w[i,:,:])
+            #con.set_clim(vmin=-0.00005, vmax=0.00005)
+            con.set_clim(vmin=-0.00015, vmax=0.00015)
             cbar = plt.colorbar(con, orientation='vertical')
             cbar.set_label("vorticity")
             #plt.show()
@@ -654,6 +663,10 @@ class vorticity(object):
 if __name__ == "__main__":
     starttime = '2014-03-22'
     endtime = '2014-03-27'
-    vorticity(starttime, endtime)
+    wdr = os.getcwd()
+    sunfile = wdr+'/SUNTANS_file/GalvCoarse_0000.nc'
+    vor = vorticity(starttime, endtime)
+    vor.readFile(sunfile)
+    vor.interp_plot()
         
         

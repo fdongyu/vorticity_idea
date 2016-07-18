@@ -172,7 +172,8 @@ class vorticity(object):
             
             llons, llats=basemap(lon,lat)   
             con = basemap.contourf(llons,llats,w[i,:,:])
-            con.set_clim(vmin=-0.0003, vmax=0.0003)
+            #con.set_clim(vmin=-0.0003, vmax=0.0003)
+            con.set_clim(vmin=-0.00015, vmax=0.00015)
             cbar = plt.colorbar(con, orientation='vertical')
             cbar.set_label("vorticity")
             #plt.show()

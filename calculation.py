@@ -23,6 +23,9 @@ class cal_vorticity(object):
     """
     class for calculating sub-filtered vorticity from two models
     """
+    nx = 90
+    ny = 30    
+    
     def __init__(self, starttime, endtime, **kwargs):
         """
         Initiate a few variables
@@ -345,7 +348,7 @@ class cal_vorticity(object):
             tau_h_x[tstep,:,:] = tau_avg_x[tstep,:,:]/h[:,:]
             tau_h_y[tstep,:,:] = tau_avg_y[tstep,:,:]/h[:,:]
         #### Step 4) Calculate the differentiation of the resulting term ####
-        new_lon, new_lat, dx, dy = self.rectilinear(90,30)
+        new_lon, new_lat, dx, dy = self.rectilinear(self.nx,self.ny)
         xnew, ynew = self.convert_utm(new_lon, new_lat)
         
         dx = np.diff(xnew)
@@ -453,7 +456,7 @@ class cal_vorticity(object):
         tau_avg_y2[:,maskss==0] = 0.
         
         #### Step 7) interpolate the averaged value from ROMS grid to the new rectilinear grid ####
-        new_lon, new_lat, dx, dy = self.rectilinear(90,30)
+        new_lon, new_lat, dx, dy = self.rectilinear(self.nx,self.ny)
         new_SW=(new_lat.min(), new_lon.min())  ###(lat, lon)
         new_NE=(new_lat.max(), new_lon.max())        
 
@@ -566,7 +569,7 @@ class cal_vorticity(object):
         returns the calculated vorticity from the 2D advection diffusion equation
         """
         
-        lon, lat, dx, dy = self.rectilinear(90,30)
+        lon, lat, dx, dy = self.rectilinear(self.nx,self.ny)
         #### The interpolated ROMS u, v velocity
         u_all, v_all = self.interp_roms_uv(lon, lat)
         hout = self.interp_h(lon, lat)
@@ -713,8 +716,16 @@ class cal_vorticity(object):
         calculate the U, V velocity from the resulting vorticity
         """ 
         
+        def flow_direction(u, v):
+            """
+            Input: u, v velocity //
+            Output: flow direction
+            """
+            
+            return np.arctan2(u, v) * 180. / np.pi % 360
         
-        lon, lat, dx, dy = self.rectilinear(90,30)
+        
+        lon, lat, dx, dy = self.rectilinear(self.nx,self.ny)
         w = self.calc()
         
         #### The interpolated ROMS u, v velocity
@@ -722,7 +733,8 @@ class cal_vorticity(object):
         ur = ur[:,0,:,:]
         vr = vr[:,0,:,:]
         ur, vr = self.rot2d(ur, vr, math.radians(35))
-        spd_roms = np.sqrt(ur*ur+vr*vr)        
+        spd_roms = np.sqrt(ur*ur+vr*vr)
+        dir_roms = flow_direction(ur, vr)        
         
         uu = -w/2.* dy
         vv = w/2.* dx
@@ -730,12 +742,16 @@ class cal_vorticity(object):
         
         unew = ur + uu
         vnew = vr + vv
-        spd_new = spd_roms + spd_filter
+        #spd_new = spd_roms + spd_filter
+        spd_new = np.sqrt(unew*unew+vnew*vnew)
+        dir_new = flow_direction(unew, vnew)
                     
         pdb.set_trace()
         
         #### Compare ####
-        row = 25; col = 65        
+        #row = np.floor(self.ny/2.);
+        row = self.ny-2
+        col = np.floor(self.nx/2.)     
         
         Point1 = (lat[row,col], lon[row,col])        
         nc = Dataset(self.sunfile, 'r')
@@ -754,6 +770,7 @@ class cal_vorticity(object):
         usun = nc.variables['uc'][ind0:ind1+1,0,ind_sun]
         vsun = nc.variables['vc'][ind0:ind1+1,0,ind_sun]
         spd_sun = np.sqrt(usun*usun + vsun*vsun)
+        dir_sun = flow_direction(usun, vsun)
         
         ind = self.findNearset(Point1[1], Point1[0], lon, lat)
         J0=ind[0][0] 
@@ -787,32 +804,38 @@ class cal_vorticity(object):
 #            #plt.show()
         
              
-        plt.figure(1)
-        l1 = plt.plot(self.data_roms['time'], spd_new[:,row,col],label='new')
-        l2 = plt.plot(self.data_roms['time'], spd_roms[:,J0,I0], label='ROMS')
-        l3 = plt.plot(self.data_roms['time'], spd_sun[:], label='SUNTANS')
-        plt.legend()
-        plt.ylabel('velocity (m/s)')
-        plt.title('flow velocity at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))        
-        #plt.show()
+        fig, (ax1, ax2) = plt.subplots(2, sharex=True)
+        l1 = ax1.plot(self.data_roms['time'], spd_new[:,row,col], '-r', label='new')
+        l2 = ax1.plot(self.data_roms['time'], spd_roms[:,J0,I0], '-b', label='ROMS')
+        l3 = ax1.plot(self.data_roms['time'], spd_sun[:], '-k', label='SUNTANS')
+        ax1.legend()
+        ax1.set_ylabel('velocity (m/s)')
+        ax1.set_title('flow velocity at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))        
         
-        plt.figure(2)
-        l1 = plt.plot(self.data_roms['time'], unew[:, row, col], label='new')
-        l2 = plt.plot(self.data_roms['time'], ur[:, J0, I0], label='ROMS')
-        l3 = plt.plot(self.data_roms['time'], usun[:], label='SUNTANS')
-        plt.legend()
-        plt.ylabel('velocity (m/s)')
-        plt.title('U velocity at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))  
+        l4 = ax2.plot(self.data_roms['time'], dir_new[:, row, col], 'or', label='new')
+        l5 = ax2.plot(self.data_roms['time'], dir_roms[:, J0, I0], 'ob', label='ROMS')
+        l6 = ax2.plot(self.data_roms['time'], dir_sun[:], 'ok', label='SUNTANS')
+        ax2.legend()
+        ax2.set_ylabel('flow angle')
+        ax2.set_title('flow direction at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))  
         
-        plt.figure(3)
-        l1 = plt.plot(self.data_roms['time'], vnew[:, row, col], label='new')
-        l2 = plt.plot(self.data_roms['time'], vr[:, J0, I0], label='ROMS')
-        l3 = plt.plot(self.data_roms['time'], vsun[:], label='SUNTANS')
-        plt.legend()
-        plt.ylabel('velocity (m/s)')
-        plt.title('V velocity at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))  
-        
-        plt.show()
+        plt.show()        
+         
+#        l4 = ax2.plot(self.data_roms['time'], unew[:, row, col], label='new')
+#        l5 = ax2.plot(self.data_roms['time'], ur[:, J0, I0], label='ROMS')
+#        l6 = ax2.plot(self.data_roms['time'], usun[:], label='SUNTANS')
+#        ax2.legend()
+#        ax2.set_ylabel('velocity (m/s)')
+#        ax2.set_title('U velocity at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))  
+#        
+#        l7 = ax3.plot(self.data_roms['time'], vnew[:, row, col], label='new')
+#        l8 = ax3.plot(self.data_roms['time'], vr[:, J0, I0], label='ROMS')
+#        l9 = ax3.plot(self.data_roms['time'], vsun[:], label='SUNTANS')
+#        ax3.legend()
+#        ax3.set_ylabel('velocity (m/s)')
+#        ax3.set_title('V velocity at (%s, %s)'%(str(lat[row,col]), str(lon[row,col])))  
+#        
+#        plt.show()
                               
         pdb.set_trace()         
          
@@ -822,7 +845,7 @@ class cal_vorticity(object):
         function for visualizing the generated grid
         """
         
-        lon, lat, dx, dy  = self.rectilinear(90,30)
+        lon, lat, dx, dy  = self.rectilinear(self.nx,self.ny)
         pdb.set_trace()
         west=-95.42; east=-93.94
         south=28.39;  north=29.90
@@ -991,8 +1014,10 @@ class cal_vorticity(object):
         
 #### For testing ####        
 if __name__ == "__main__":
-    starttime = '2014-03-22'
-    endtime = '2014-03-27'
+    #starttime = '2014-03-22'
+    #endtime = '2014-03-27'
+    starttime = '2009-06-01'
+    endtime = '2009-06-08'
     cal_vorticity(starttime, endtime)       
         
         
